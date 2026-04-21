@@ -384,14 +384,24 @@ with callPackage ./lockfile.nix {}; let
           patchedLockfile = resolvedStore.passthru.patchedLockfile;
         };
       }
-      (attrs
-        // {
-          extraNodeModuleSources = null;
-          installEnv = null;
-          buildEnv = null;
-          nodeModules = null;
-          pnpmStore = null;
-        })
+      # Strip every mkPnpmPackage-specific parameter from `attrs` before
+      # letting it flow into stdenv.mkDerivation. Path-typed params like
+      # `workspace` would otherwise be realised as derivation inputs and
+      # silently force the *entire* workspace tree to become a dependency
+      # of every app — breaking per-app cache isolation.
+      (removeAttrs attrs [
+        "workspace" "components" "src"
+        "packageJSON" "componentPackageJSONs"
+        "pnpmLockYaml" "pnpmWorkspaceYaml"
+        "pname" "version" "name"
+        "registry" "script" "distDir" "distDirs" "distDirIsOut"
+        "installNodeModules" "installPackageFiles" "installInPlace"
+        "installEnv" "buildEnv" "noDevDependencies"
+        "extraNodeModuleSources" "copyPnpmStore" "copyNodeModules"
+        "extraBuildInputs" "extraNativeBuildInputs"
+        "nodeModules" "pnpmStore"
+        "nodejs" "pnpm" "pkg-config"
+      ])
     );
 
   # Convenience function for multi-app pnpm workspaces. Builds one shared
