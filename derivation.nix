@@ -6,6 +6,7 @@
   callPackage,
   writeText,
   runCommand,
+  symlinkJoin,
   ...
 }:
 with builtins;
@@ -14,52 +15,87 @@ with callPackage ./lockfile.nix {}; let
   nodePkg = nodejs;
   pkgConfigPkg = pkg-config;
 
-  # Build the pnpm content-addressable store as a separate derivation.
-  # Inputs: the lockfile (via processLockfile). Deduped across callers that
-  # pass the same lockfile, since the derivation name is fixed.
+  # Build one pnpm-store shard per tarball. Each shard is a tiny derivation
+  # whose only dependency (beyond pnpm/nodejs) is its single tarball, so it
+  # caches independently — bumping one package only invalidates its own
+  # shard. The sharded layout relies on pnpm's store being content-addressed:
+  # shard top-level entries are named `file+<encoded-tarball-path>/` (unique
+  # per tarball) and shared `files/`/`index/` subdirs are SHA-keyed (so
+  # identical file content produces identical paths, which symlinkJoin
+  # collapses safely via lndir).
+  mkPnpmStoreShard = {
+    nodejs ? nodePkg,
+    pnpm ? nodejs.pkgs.pnpm,
+  }: tarball:
+    runCommand "pnpm-shard"
+    {
+      nativeBuildInputs = [nodejs pnpm];
+      dontFixup = true;
+      inherit tarball;
+    } ''
+      mkdir -p $out
+      export HOME=$(mktemp -d)
+      store=$(pnpm store path)
+      mkdir -p $(dirname $store)
+      ln -s $out "$store"
+      pnpm store add "$tarball"
+    '';
+
+  # Build the pnpm content-addressable store. When `sharded = true` (default),
+  # the store is the symlinkJoin of one shard derivation per tarball — this
+  # means a single dep bump only rebuilds that one shard and re-runs a cheap
+  # merge step, not the whole 5GB+ store. When false, falls back to a single
+  # monolithic `pnpm store add` call (simpler, one less layer of indirection,
+  # but pays full rebuild cost on any lockfile change).
   mkPnpmStore = {
     pnpmLockYaml,
     registry ? "https://registry.npmjs.org",
     noDevDependencies ? false,
     nodejs ? nodePkg,
     pnpm ? nodejs.pkgs.pnpm,
+    sharded ? true,
   }: let
     processResult = processLockfile {
       inherit registry noDevDependencies;
       lockfile = pnpmLockYaml;
     };
     tarballs = unique processResult.dependencyTarballs;
-  in
-    stdenv.mkDerivation {
-      name = "pnpm-store";
-      nativeBuildInputs = [nodejs pnpm];
-      # Pass the tarball list via a file to avoid ARG_MAX on huge monorepos.
-      depsList = concatStringsSep "\n" tarballs;
-      passAsFile = ["depsList"];
-      dontUnpack = true;
-      dontConfigure = true;
-      # Stdenv's fixupPhase iterates every file in $out patching shebangs.
-      # On a monorepo-scale pnpm store (2k+ tarballs, 5GB+ extracted) this
-      # takes ~90s every rebuild, patching scripts that already work fine
-      # in the nix sandbox via PATH-provided node/sh.
-      dontFixup = true;
-      buildPhase = ''
-        runHook preBuild
-        mkdir -p $out
-        store=$(pnpm store path)
-        mkdir -p $(dirname $store)
-        [ -e "$store" ] && rm -rf "$store"
-        ln -s $out "$store"
-        xargs -a "$depsListPath" -d '\n' -n 200 pnpm store add
-        runHook postBuild
-      '';
-      installPhase = "true";
-      passthru = {
-        inherit tarballs;
-        patchedLockfile = processResult.patchedLockfile;
-        patchedLockfileYaml = writeText "pnpm-lock.yaml" (toJSON processResult.patchedLockfile);
-      };
+    passthruAttrs = {
+      inherit tarballs;
+      patchedLockfile = processResult.patchedLockfile;
+      patchedLockfileYaml = writeText "pnpm-lock.yaml" (toJSON processResult.patchedLockfile);
     };
+    shardOf = mkPnpmStoreShard {inherit nodejs pnpm;};
+  in
+    if sharded
+    then
+      symlinkJoin {
+        name = "pnpm-store";
+        paths = map shardOf tarballs;
+        passthru = passthruAttrs;
+      }
+    else
+      stdenv.mkDerivation {
+        name = "pnpm-store";
+        nativeBuildInputs = [nodejs pnpm];
+        depsList = concatStringsSep "\n" tarballs;
+        passAsFile = ["depsList"];
+        dontUnpack = true;
+        dontConfigure = true;
+        dontFixup = true;
+        buildPhase = ''
+          runHook preBuild
+          mkdir -p $out
+          store=$(pnpm store path)
+          mkdir -p $(dirname $store)
+          [ -e "$store" ] && rm -rf "$store"
+          ln -s $out "$store"
+          xargs -a "$depsListPath" -d '\n' -n 200 pnpm store add
+          runHook postBuild
+        '';
+        installPhase = "true";
+        passthru = passthruAttrs;
+      };
 
   # Build node_modules as a separate derivation. Source is ONLY package.jsons,
   # workspace.yaml, and the patched lockfile — no app source code. Result is
