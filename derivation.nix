@@ -102,6 +102,14 @@ with callPackage ./lockfile.nix {}; let
       name = "${pname}-node-modules";
       nativeBuildInputs = [nodejs pnpm];
 
+      # pnpm's node_modules contains symlinks to @repo/* package paths that
+      # only exist once the source tree is layered in during the app build.
+      # They're "broken" in isolation but correct at consumption time.
+      # Skip the whole fixupPhase (shebang patching + symlink checks) —
+      # rewriting shebangs inside node_modules just churns hashes without
+      # fixing anything that wasn't already working in the sandbox.
+      dontFixup = true;
+
       unpackPhase = concatStringsSep "\n" (
         [(forEachComponent (c: ''mkdir -p "${c}"''))]
         ++ map
