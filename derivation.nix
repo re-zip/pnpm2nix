@@ -400,6 +400,7 @@ with callPackage ./lockfile.nix {}; let
     installEnv ? {},
     buildEnv ? {},
     extraNativeBuildInputs ? [],
+    extraNodeModuleSources ? [],
     isolateApps ? true,
     appSrc ? null,
     copyNodeModules ? true,
@@ -419,7 +420,8 @@ with callPackage ./lockfile.nix {}; let
     sharedNodeModules = mkPnpmNodeModules {
       inherit workspace packageJSON componentPackageJSONs
               pnpmLockYaml pnpmWorkspaceYaml registry nodejs pnpm
-              noDevDependencies installEnv copyPnpmStore;
+              noDevDependencies installEnv copyPnpmStore
+              extraNodeModuleSources;
       components = allComponents;
       pnpmStore = sharedStore;
     };
