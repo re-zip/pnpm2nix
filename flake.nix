@@ -19,8 +19,11 @@
       in
       {
         packages = {
-          inherit (pkgs) mkPnpmPackage;
           example = pkgs.callPackage ./example { };
+        };
+
+        lib = {
+          inherit (pkgs) mkPnpmPackage mkPnpmWorkspace mkPnpmNodeModules mkPnpmStore;
         };
 
         checks = {
@@ -34,7 +37,8 @@
       })
     // {
       overlays.default = final: prev: {
-        inherit (prev.callPackage ./derivation.nix { }) mkPnpmPackage;
+        inherit (prev.callPackage ./derivation.nix { })
+          mkPnpmPackage mkPnpmWorkspace mkPnpmNodeModules mkPnpmStore;
       };
     };
 }
