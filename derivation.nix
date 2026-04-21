@@ -468,6 +468,18 @@ with callPackage ./lockfile.nix {}; let
       # app actually needs, even though sharedNodeModules contains every
       # component's node_modules directory.
       appComponents = [app.path] ++ packages;
+      # Copy workspace-level extras (e.g. .npmrc) into the app build tree.
+      # pnpm looks up .npmrc from cwd/parents; without this, settings like
+      # manage-package-manager-versions=false wouldn't reach the build.
+      injectExtras = concatStringsSep "\n" (map (s: let
+        nv =
+          if isAttrs s
+          then s
+          else {
+            name = ".";
+            value = s;
+          };
+      in ''cp -f ${nv.value} ${nv.name}'') extraNodeModuleSources);
     in
       mkPnpmPackage ({
         inherit pnpmLockYaml pnpmWorkspaceYaml packageJSON registry nodejs pnpm
@@ -486,6 +498,7 @@ with callPackage ./lockfile.nix {}; let
         buildEnv = buildEnv // (app.buildEnv or {});
         nodeModules = sharedNodeModules;
         pnpmStore = sharedStore;
+        preConfigure = injectExtras;
       }
       // (app.extraArgs or {}));
   in {
