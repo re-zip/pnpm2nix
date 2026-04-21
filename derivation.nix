@@ -38,6 +38,11 @@ with callPackage ./lockfile.nix {}; let
       passAsFile = ["depsList"];
       dontUnpack = true;
       dontConfigure = true;
+      # Stdenv's fixupPhase iterates every file in $out patching shebangs.
+      # On a monorepo-scale pnpm store (2k+ tarballs, 5GB+ extracted) this
+      # takes ~90s every rebuild, patching scripts that already work fine
+      # in the nix sandbox via PATH-provided node/sh.
+      dontFixup = true;
       buildPhase = ''
         runHook preBuild
         mkdir -p $out
