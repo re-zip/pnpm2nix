@@ -301,14 +301,22 @@ with callPackage ./lockfile.nix {}; let
     patchedLockfileYaml = resolvedStore.passthru.patchedLockfileYaml;
 
     # Per-dir layering: either symlink (read-only, fast) or reflink-cp
-    # (writable, almost as fast on CoW filesystems).
+    # (writable, almost as fast on CoW filesystems). Components without
+    # dependencies (e.g. type-only shared packages) have no node_modules in
+    # the shared store; skip them silently rather than failing the build.
     layerNodeModules = dir:
       if copyNodeModules
       then ''
-        cp -aT --reflink=auto ${effectiveNodeModules}/${dir} ${dir}
-        chmod -R u+w ${dir}
+        if [ -e ${effectiveNodeModules}/${dir} ]; then
+          cp -aT --reflink=auto ${effectiveNodeModules}/${dir} ${dir}
+          chmod -R u+w ${dir}
+        fi
       ''
-      else ''ln -s ${effectiveNodeModules}/${dir} ${dir}'';
+      else ''
+        if [ -e ${effectiveNodeModules}/${dir} ]; then
+          ln -s ${effectiveNodeModules}/${dir} ${dir}
+        fi
+      '';
   in
     stdenv.mkDerivation (
       recursiveUpdate
